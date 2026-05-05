@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -433,14 +434,14 @@ func (a *App) OpenURL(url string) {
 	wruntime.BrowserOpenURL(a.ctx, url)
 }
 
-// OpenAddonsFolder opens the configured AddOns folder in the OS file manager.
+// OpenAddonsFolder opens the configured AddOns folder in Windows Explorer.
 func (a *App) OpenAddonsFolder() error {
 	cfg, _ := loadConfig()
 	if cfg.AddonsPath == "" {
 		return errors.New("addons path not set")
 	}
-	if a.ctx != nil {
-		wruntime.BrowserOpenURL(a.ctx, "file:///"+filepath.ToSlash(cfg.AddonsPath))
-	}
+	cmd := exec.Command("explorer.exe", cfg.AddonsPath)
+	// explorer.exe returns non-zero even on success; ignore the error.
+	_ = cmd.Start()
 	return nil
 }

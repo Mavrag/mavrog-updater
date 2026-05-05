@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"os"
+	"time"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -13,16 +14,35 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// singleInstanceMutex is held for the process lifetime. selfupdate releases
+// it right before spawning the new child so the restart doesn't collide.
+var singleInstanceMutex windows.Handle
+
 func main() {
-	// Single-instance guard: exit if already running.
+	// Single-instance guard. Retry briefly to survive a self-update restart
+	// where the old parent is still closing its mutex handle.
 	mutexName, _ := windows.UTF16PtrFromString("MavrogUpdater_SingleInstance")
-	h, err := windows.CreateMutex(nil, false, mutexName)
-	if h != 0 {
-		defer windows.CloseHandle(h)
+	var h windows.Handle
+	var err error
+	for i := 0; i < 20; i++ {
+		h, err = windows.CreateMutex(nil, false, mutexName)
+		if err != windows.ERROR_ALREADY_EXISTS {
+			break
+		}
+		if h != 0 {
+			windows.CloseHandle(h)
+		}
+		time.Sleep(150 * time.Millisecond)
 	}
 	if err == windows.ERROR_ALREADY_EXISTS {
 		os.Exit(0)
 	}
+	singleInstanceMutex = h
+	defer func() {
+		if singleInstanceMutex != 0 {
+			windows.CloseHandle(singleInstanceMutex)
+		}
+	}()
 
 	// Create an instance of the app structure
 	app := NewApp()

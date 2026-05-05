@@ -7,6 +7,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
+	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 // pickUpdaterAsset chooses an updater binary asset for the current platform.
@@ -14,7 +18,7 @@ func pickUpdaterAsset(r *Release) *ReleaseAsset {
 	if r == nil {
 		return nil
 	}
-	wantOS := runtime.GOOS  // "windows"
+	wantOS := runtime.GOOS // "windows"
 	wantExt := ".exe"
 	if wantOS != "windows" {
 		wantExt = ""
@@ -70,18 +74,25 @@ func (a *App) performSelfUpdate(downloadURL string) error {
 		return fmt.Errorf("install new: %w", err)
 	}
 
-	// Start new exe and exit current process.
+	// Release the single-instance mutex BEFORE spawning the child so the
+	// new process can immediately acquire it without retrying.
+	if singleInstanceMutex != 0 {
+		windows.CloseHandle(singleInstanceMutex)
+		singleInstanceMutex = 0
+	}
+
+	// Start new exe detached.
 	cmd := exec.Command(exe)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Stdin = nil
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000008} // DETACHED_PROCESS
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("restart: %w", err)
 	}
-	go func() {
-		// Give the new process a moment to start.
-		os.Exit(0)
-	}()
+	// Give the new process a moment to start, then hard-exit.
+	time.Sleep(200 * time.Millisecond)
+	os.Exit(0)
 	return nil
 }
 
