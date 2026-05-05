@@ -4,11 +4,17 @@ import {main} from '../models';
 
 export function ApplySelfUpdate():Promise<void>;
 
+export function CheckElvUIUpdate():Promise<main.ElvUIInfo>;
+
 export function CheckForUpdate():Promise<main.UpdateInfo>;
 
 export function CheckSelfUpdate():Promise<main.SelfUpdateInfo>;
 
+export function ConfirmInstallAddon():Promise<string>;
+
 export function GetStatus():Promise<main.AppStatus>;
+
+export function InstallElvUIUpdate():Promise<string>;
 
 export function InstallUpdate():Promise<string>;
 

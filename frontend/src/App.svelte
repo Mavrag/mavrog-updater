@@ -11,6 +11,9 @@
     OpenAddonsFolder,
     CheckSelfUpdate,
     ApplySelfUpdate,
+    CheckElvUIUpdate,
+    InstallElvUIUpdate,
+    ConfirmInstallAddon,
   } from '../wailsjs/go/main/App';
   import { EventsOn } from '../wailsjs/runtime/runtime';
   import type { main } from '../wailsjs/go/models';
@@ -18,13 +21,25 @@
   let status: main.AppStatus | null = null;
   let update: main.UpdateInfo | null = null;
   let selfUpdate: main.SelfUpdateInfo | null = null;
+  let elvui: main.ElvUIInfo | null = null;
   let checking = false;
   let installing = false;
+  let installingElvUI = false;
   let progress = 0;
   let logLines: string[] = [];
   let errorMsg = '';
   let view: 'home' | 'changelog' | 'settings' = 'home';
   let autoCheck = true;
+  let showInstallPrompt = false;
+  let bgUpdateBanner = '';
+
+  const audio = new Audio('/mavrog.ogg');
+  audio.volume = 0.4;
+
+  function playBattlecry() {
+    audio.currentTime = 0;
+    audio.play().catch(() => {});
+  }
 
   function pushLog(msg: string) {
     logLines = [...logLines.slice(-50), msg];
@@ -34,6 +49,7 @@
     try {
       status = await GetStatus();
       autoCheck = status.autoCheck;
+      showInstallPrompt = !!status.addonsPath && !status.addonInstalled;
     } catch (e: any) {
       errorMsg = String(e);
     }
@@ -47,9 +63,15 @@
       update = await CheckForUpdate();
     } catch (e: any) {
       errorMsg = String(e?.message ?? e);
-    } finally {
-      checking = false;
     }
+    if (status?.elvuiInstalled) {
+      try {
+        elvui = await CheckElvUIUpdate();
+      } catch (e: any) {
+        if (!errorMsg) errorMsg = String(e?.message ?? e);
+      }
+    }
+    checking = false;
   }
 
   async function install() {
@@ -69,10 +91,46 @@
     }
   }
 
+  async function installElvUI() {
+    if (installingElvUI) return;
+    installingElvUI = true;
+    errorMsg = '';
+    progress = 0;
+    try {
+      const v = await InstallElvUIUpdate();
+      pushLog(`ElvUI ${v} installed`);
+      elvui = await CheckElvUIUpdate();
+    } catch (e: any) {
+      errorMsg = String(e?.message ?? e);
+    } finally {
+      installingElvUI = false;
+    }
+  }
+
+  async function confirmInstall() {
+    showInstallPrompt = false;
+    installing = true;
+    errorMsg = '';
+    progress = 0;
+    try {
+      const v = await ConfirmInstallAddon();
+      pushLog(`Installed ${v}`);
+      await refreshStatus();
+      await check();
+    } catch (e: any) {
+      errorMsg = String(e?.message ?? e);
+    } finally {
+      installing = false;
+    }
+  }
+
   async function pickFolder() {
     try {
       const p = await PickAddonsFolder();
-      if (p) await refreshStatus();
+      if (p) {
+        await refreshStatus();
+        if (status?.elvuiInstalled) elvui = await CheckElvUIUpdate();
+      }
     } catch (e: any) {
       errorMsg = String(e?.message ?? e);
     }
@@ -87,7 +145,6 @@
     try {
       selfUpdate = await CheckSelfUpdate();
     } catch (e) {
-      // Silent: updater repo may not yet have releases.
       selfUpdate = null;
     }
   }
@@ -105,11 +162,10 @@
 
   function renderMd(src: string): string {
     if (!src) return '';
-    // Ensure every heading is preceded by a blank line (required when breaks:true).
     const normalized = src
-      .replace(/([^\n])\n(#{1,6} )/g, '$1\n\n$2')  // heading after text
-      .replace(/^(#{1,6} )/gm, '\n$1')              // heading at line start
-      .replace(/\n{3,}/g, '\n\n');                  // collapse excess blanks
+      .replace(/([^\n])\n(#{1,6} )/g, '$1\n\n$2')
+      .replace(/^(#{1,6} )/gm, '\n$1')
+      .replace(/\n{3,}/g, '\n\n');
     return marked.parse(normalized.trimStart()) as string;
   }
 
@@ -128,11 +184,15 @@
       progress = Math.max(0, Math.min(100, p?.percent ?? 0));
     });
     EventsOn('log', (msg: string) => pushLog(msg));
+    EventsOn('addon:installed', () => playBattlecry());
+    EventsOn('elvui:installed', () => playBattlecry());
+    EventsOn('bg:update', (data: any) => {
+      bgUpdateBanner = `Update available: v${data?.latest}`;
+    });
+    EventsOn('tray:check', () => { view = 'home'; check(); });
 
     await refreshStatus();
-    if (status?.autoCheck) {
-      await check();
-    }
+    if (status?.autoCheck) await check();
     checkSelf();
   });
 </script>
@@ -143,6 +203,9 @@
     <button class="ghost" class:active={view === 'changelog'} on:click={() => view = 'changelog'}>Changelog</button>
     <button class="ghost" class:active={view === 'settings'} on:click={() => view = 'settings'}>Settings</button>
     <span class="spacer"></span>
+    <button class="nav-check" on:click={check} disabled={checking || installing || installingElvUI}>
+      {checking ? '↻ Checking...' : '↻ Check'}
+    </button>
     <span class="addon-name">{status?.addonName ?? ''}</span>
   </nav>
 
@@ -153,74 +216,113 @@
     </div>
   {/if}
 
+  {#if bgUpdateBanner}
+    <div class="banner info">
+      <span>{bgUpdateBanner}</span>
+      <button class="primary" on:click={() => { bgUpdateBanner = ''; check(); view = 'home'; }}>Check Now</button>
+    </div>
+  {/if}
+
   {#if selfUpdate?.updateAvailable}
     <div class="banner info">
-      <span>Updater {selfUpdate.latestVersion} is available (you have {selfUpdate.currentVersion}).</span>
+      <span>Updater {selfUpdate.latestVersion} is available.</span>
       <button class="primary" on:click={applySelf}>Update Updater</button>
+    </div>
+  {/if}
+
+  {#if showInstallPrompt}
+    <div class="banner install">
+      <span>MavrogBattlecry is not installed. Install it now?</span>
+      <div class="row-actions">
+        <button class="primary" on:click={confirmInstall}>Install</button>
+        <button class="ghost" on:click={() => showInstallPrompt = false}>Later</button>
+      </div>
     </div>
   {/if}
 
   {#if view === 'home'}
     <section class="hero">
-      <div class="versions">
-        <div class="vbox">
-          <div class="label">Installed</div>
-          <div class="value">{status?.installedVersion || '— not installed —'}</div>
-        </div>
-        <div class="arrow">→</div>
-        <div class="vbox">
-          <div class="label">Latest</div>
-          <div class="value latest">
-            {checking ? 'checking...' : (update?.latestVersion || '?')}
+      <div class="addon-block">
+        <div class="block-title">MavrogBattlecry</div>
+        <div class="versions">
+          <div class="vbox">
+            <div class="label">Installed</div>
+            <div class="value">{status?.installedVersion || '—'}</div>
           </div>
-          {#if update?.publishedAt}
-            <div class="muted small">{update.publishedAt}</div>
-          {/if}
+          <div class="arrow">→</div>
+          <div class="vbox">
+            <div class="label">Latest</div>
+            <div class="value latest">
+              {checking ? '...' : (update?.latestVersion || '?')}
+            </div>
+            {#if update?.publishedAt}
+              <div class="muted small">{update.publishedAt}</div>
+            {/if}
+          </div>
         </div>
+        <div class="actions">
+          <button class="primary" on:click={install}
+            disabled={installing || checking || !update?.updateAvailable || !status?.addonsPath}>
+            {#if installing}
+              Installing... {progress > 0 ? progress.toFixed(0) + '%' : ''}
+            {:else if update?.updateAvailable}
+              Install {update.latestVersion}
+            {:else if update && !update.hasAsset}
+              No asset
+            {:else}
+              Up to date
+            {/if}
+          </button>
+        </div>
+        {#if (installing) && progress > 0}
+          <div class="progress"><div class="bar" style="width: {progress}%"></div></div>
+        {/if}
+        {#if update?.assetName}
+          <div class="muted small">{update.assetName} {update.assetSize ? '(' + fmtBytes(update.assetSize) + ')' : ''}</div>
+        {/if}
       </div>
 
-      <div class="actions">
-        <button on:click={check} disabled={checking || installing}>
-          {checking ? 'Checking...' : 'Check for Updates'}
-        </button>
-        <button class="primary" on:click={install}
-          disabled={installing || checking || !update?.updateAvailable || !status?.addonsPath}>
-          {#if installing}
-            Installing... {progress > 0 ? progress.toFixed(0) + '%' : ''}
-          {:else if update?.updateAvailable}
-            Install {update.latestVersion}
-          {:else if update && !update.hasAsset}
-            No release asset
-          {:else}
-            Up to date
+      {#if status?.elvuiInstalled}
+        <div class="addon-block elvui-block">
+          <div class="block-title">ElvUI {#if elvui?.webUrl}<button class="ghost title-link" on:click={() => elvui && OpenURL(elvui.webUrl)}>Tukui ↗</button>{/if}</div>
+          <div class="versions">
+            <div class="vbox">
+              <div class="label">Installed</div>
+              <div class="value">{elvui?.installedVersion || '—'}</div>
+            </div>
+            <div class="arrow">→</div>
+            <div class="vbox">
+              <div class="label">Latest</div>
+              <div class="value latest">{checking ? '...' : (elvui?.latestVersion || '?')}</div>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="primary" on:click={installElvUI}
+              disabled={installingElvUI || checking || !elvui?.updateAvailable}>
+              {#if installingElvUI}
+                Installing... {progress > 0 ? progress.toFixed(0) + '%' : ''}
+              {:else if elvui?.updateAvailable}
+                Install {elvui.latestVersion}
+              {:else}
+                Up to date
+              {/if}
+            </button>
+          </div>
+          {#if installingElvUI && progress > 0}
+            <div class="progress"><div class="bar" style="width: {progress}%"></div></div>
           {/if}
-        </button>
-      </div>
-
-      {#if installing && progress > 0}
-        <div class="progress">
-          <div class="bar" style="width: {progress}%"></div>
-        </div>
-      {/if}
-
-      {#if update?.assetName}
-        <div class="muted small center">
-          Asset: {update.assetName} {update.assetSize ? '(' + fmtBytes(update.assetSize) + ')' : ''}
         </div>
       {/if}
 
       {#if !status?.addonsPath}
-        <div class="warn">
-          ⚠ AddOns folder not found. <button class="ghost" on:click={pickFolder}>Pick folder</button>
-        </div>
+        <div class="warn">⚠ AddOns folder not found. <button class="ghost" on:click={pickFolder}>Pick folder</button></div>
       {/if}
 
       {#if logLines.length}
-        <div class="log">
-          {#each logLines as l}<div>{l}</div>{/each}
-        </div>
+        <div class="log">{#each logLines as l}<div>{l}</div>{/each}</div>
       {/if}
     </section>
+
   {:else if view === 'changelog'}
     <section class="changelog">
       {#if !update}
@@ -235,6 +337,7 @@
         {/if}
       {/if}
     </section>
+
   {:else}
     <section class="settings">
       <div class="row">
@@ -250,29 +353,23 @@
       <div class="row">
         <div>
           <div class="label">Auto-check on launch</div>
-          <div class="muted small">Automatically check GitHub when the app starts.</div>
+          <div class="muted small">Check for updates when the app starts.</div>
         </div>
-        <button on:click={toggleAuto} class:primary={autoCheck}>
-          {autoCheck ? 'On' : 'Off'}
-        </button>
+        <button on:click={toggleAuto} class:primary={autoCheck}>{autoCheck ? 'On' : 'Off'}</button>
       </div>
       <div class="row">
         <div>
           <div class="label">Repository</div>
           <div class="muted small">{status?.addonRepo}</div>
         </div>
-        <button class="ghost" on:click={() => OpenURL(`https://github.com/${status?.addonRepo}`)}>
-          Open ↗
-        </button>
+        <button class="ghost" on:click={() => OpenURL(`https://github.com/${status?.addonRepo}`)}>Open ↗</button>
       </div>
       <div class="row">
         <div>
           <div class="label">Updater Version</div>
           <div class="muted small">
             {status?.appVersion}
-            {#if selfUpdate?.updateAvailable}
-              · update available: {selfUpdate.latestVersion}
-            {/if}
+            {#if selfUpdate?.updateAvailable}· update available: {selfUpdate.latestVersion}{/if}
           </div>
         </div>
         <button on:click={applySelf} disabled={!selfUpdate?.updateAvailable}>Update</button>
@@ -300,14 +397,42 @@
     color: var(--muted); font-size: 11px; padding-right: 4px;
     letter-spacing: 0.03em;
   }
+  nav .nav-icon {
+    font-size: 13px; padding: 2px 6px; background: none; border: none;
+    color: var(--muted); cursor: pointer; border-radius: 4px;
+  }
+  nav .nav-icon:hover { color: var(--text); background: var(--bg-3); }
+
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center; z-index: 100;
+  }
+  .modal {
+    background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 20px; min-width: 260px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .modal-title { font-size: 13px; font-weight: 700; color: var(--text); }
+  .modal-body  { font-size: 12px; color: var(--muted); }
+  .modal-actions { display: flex; gap: 7px; justify-content: flex-end; }
+
+  nav .nav-check {
+    font-size: 11px; padding: 3px 9px;
+    background: var(--bg-3); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  nav .nav-check:hover:not(:disabled) { background: var(--bg-2); border-color: var(--accent); color: var(--accent); }
+  nav .nav-check:disabled { opacity: 0.45; cursor: default; }
 
   .banner {
     display: flex; align-items: center; justify-content: space-between;
     padding: 7px 11px; border-radius: 8px; font-size: 12px;
     border: 1px solid var(--border);
   }
-  .banner.error { background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.4); }
-  .banner.info  { background: rgba(245, 185, 66, 0.08); border-color: rgba(245, 185, 66, 0.4); }
+  .banner.error   { background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.4); }
+  .banner.info    { background: rgba(245, 185, 66, 0.08); border-color: rgba(245, 185, 66, 0.4); }
+  .banner.install { background: rgba(99, 220, 130, 0.08); border-color: rgba(99, 220, 130, 0.4); }
 
   .hero {
     display: flex; flex-direction: column; align-items: center; gap: 9px;
@@ -318,6 +443,15 @@
     flex: 1;
     overflow: auto;
   }
+  .addon-block {
+    width: 100%; display: flex; flex-direction: column; align-items: center; gap: 7px;
+    padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-3);
+  }
+  .addon-block + .addon-block { margin-top: 4px; }
+  .elvui-block { border-color: rgba(99, 220, 130, 0.25); }
+  .block-title { font-size: 11px; font-weight: 700; letter-spacing: 0.03em; color: var(--muted); align-self: flex-start; display: flex; align-items: center; gap: 6px; }
+  .title-link { font-size: 10px; padding: 1px 5px; text-transform: none; letter-spacing: 0; opacity: 0.7; }
+  .title-link:hover { opacity: 1; }
   .versions { display: flex; align-items: center; gap: 14px; }
   .vbox { text-align: center; min-width: 110px; }
   .label { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }

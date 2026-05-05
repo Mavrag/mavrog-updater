@@ -6,6 +6,10 @@ export function ApplySelfUpdate() {
   return window['go']['main']['App']['ApplySelfUpdate']();
 }
 
+export function CheckElvUIUpdate() {
+  return window['go']['main']['App']['CheckElvUIUpdate']();
+}
+
 export function CheckForUpdate() {
   return window['go']['main']['App']['CheckForUpdate']();
 }
@@ -14,8 +18,16 @@ export function CheckSelfUpdate() {
   return window['go']['main']['App']['CheckSelfUpdate']();
 }
 
+export function ConfirmInstallAddon() {
+  return window['go']['main']['App']['ConfirmInstallAddon']();
+}
+
 export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
+}
+
+export function InstallElvUIUpdate() {
+  return window['go']['main']['App']['InstallElvUIUpdate']();
 }
 
 export function InstallUpdate() {

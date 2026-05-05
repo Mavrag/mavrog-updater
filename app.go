@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -17,7 +19,9 @@ var AppVersion = "v0.1.0"
 
 // App is the main backend struct exposed to the frontend.
 type App struct {
-	ctx context.Context
+	ctx      context.Context
+	bgCancel context.CancelFunc
+	bgMu     sync.Mutex
 }
 
 func NewApp() *App { return &App{} }
@@ -25,6 +29,7 @@ func NewApp() *App { return &App{} }
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	cleanupOldExe()
+	a.startBackgroundChecker()
 }
 
 // ----- Status / Config -----
@@ -35,9 +40,11 @@ type AppStatus struct {
 	AddonsPath       string `json:"addonsPath"`
 	AddonsAutoFound  bool   `json:"addonsAutoFound"`
 	InstalledVersion string `json:"installedVersion"`
+	AddonInstalled   bool   `json:"addonInstalled"`
 	AutoCheck        bool   `json:"autoCheck"`
 	AddonName        string `json:"addonName"`
 	AddonRepo        string `json:"addonRepo"`
+	ElvUIInstalled   bool   `json:"elvuiInstalled"`
 }
 
 // GetStatus is called on startup by the UI.
@@ -52,14 +59,18 @@ func (a *App) GetStatus() (AppStatus, error) {
 		}
 	}
 	installed, _ := readInstalledVersion(cfg.AddonsPath)
+	addonInstalled := installed != ""
+	elvuiInstalled := isElvUIInstalled(cfg.AddonsPath)
 	return AppStatus{
 		AppVersion:       AppVersion,
 		AddonsPath:       cfg.AddonsPath,
 		AddonsAutoFound:  autoFound,
 		InstalledVersion: installed,
+		AddonInstalled:   addonInstalled,
 		AutoCheck:        cfg.AutoCheck,
 		AddonName:        AddonFolderName,
 		AddonRepo:        fmt.Sprintf("%s/%s", AddonRepoOwner, AddonRepoName),
+		ElvUIInstalled:   elvuiInstalled,
 	}, nil
 }
 
@@ -144,7 +155,7 @@ func (a *App) CheckForUpdate() (UpdateInfo, error) {
 		info.AssetSize = asset.Size
 		info.HasAsset = true
 	}
-	info.UpdateAvailable = info.HasAsset && !versionsEqual(installed, info.LatestVersion)
+	info.UpdateAvailable = info.HasAsset && semverNewer(installed, info.LatestVersion)
 	return info, nil
 }
 
@@ -152,6 +163,169 @@ func versionsEqual(a, b string) bool {
 	na := strings.TrimPrefix(strings.TrimSpace(a), "v")
 	nb := strings.TrimPrefix(strings.TrimSpace(b), "v")
 	return na != "" && na == nb
+}
+
+// semverNewer returns true if b is strictly newer than a.
+// Falls back to string equality check if parsing fails.
+func semverNewer(current, latest string) bool {
+	ca := strings.TrimPrefix(strings.TrimSpace(current), "v")
+	cb := strings.TrimPrefix(strings.TrimSpace(latest), "v")
+	if ca == "" || cb == "" {
+		return false
+	}
+	if ca == cb {
+		return false
+	}
+	ap := parseSemver(ca)
+	bp := parseSemver(cb)
+	if ap == nil || bp == nil {
+		return false
+	}
+	if bp[0] != ap[0] {
+		return bp[0] > ap[0]
+	}
+	if bp[1] != ap[1] {
+		return bp[1] > ap[1]
+	}
+	return bp[2] > ap[2]
+}
+
+func parseSemver(s string) []int {
+	// Strip pre-release suffix (e.g. "1.2.3-beta")
+	if i := strings.IndexByte(s, '-'); i > 0 {
+		s = s[:i]
+	}
+	parts := strings.SplitN(s, ".", 3)
+	if len(parts) < 2 {
+		return nil
+	}
+	nums := make([]int, 3)
+	for i, p := range parts {
+		n := 0
+		for _, c := range p {
+			if c < '0' || c > '9' {
+				return nil
+			}
+			n = n*10 + int(c-'0')
+		}
+		nums[i] = n
+	}
+	return nums
+}
+
+// ----- ElvUI -----
+
+// CheckElvUIUpdate queries the Tukui API for the latest ElvUI version.
+func (a *App) CheckElvUIUpdate() (ElvUIInfo, error) {
+	cfg, _ := loadConfig()
+	info := ElvUIInfo{
+		Installed:        isElvUIInstalled(cfg.AddonsPath),
+		InstalledVersion: readElvUIVersion(cfg.AddonsPath),
+	}
+	if !info.Installed {
+		return info, nil
+	}
+	rel, err := fetchElvUIRelease()
+	if err != nil {
+		return info, err
+	}
+	info.LatestVersion = rel.Version
+	info.DownloadURL = rel.URL
+	info.Changelog = rel.Changelog
+	info.WebURL = rel.WebURL
+	info.UpdateAvailable = rel.Version != "" && semverNewer(info.InstalledVersion, rel.Version)
+	return info, nil
+}
+
+// InstallElvUIUpdate downloads and extracts the latest ElvUI zip.
+func (a *App) InstallElvUIUpdate() (string, error) {
+	cfg, _ := loadConfig()
+	if cfg.AddonsPath == "" {
+		return "", errors.New("AddOns folder is not configured")
+	}
+	rel, err := fetchElvUIRelease()
+	if err != nil {
+		return "", err
+	}
+	if rel.URL == "" {
+		return "", errors.New("no download URL from Tukui API")
+	}
+	tmpDir, err := os.MkdirTemp("", "mavrog-elvui-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	zipPath := filepath.Join(tmpDir, "elvui.zip")
+	a.emitLog(fmt.Sprintf("Downloading ElvUI %s...", rel.Version))
+	if err := a.downloadFile(rel.URL, zipPath, "install:progress"); err != nil {
+		return "", err
+	}
+	a.emitLog("Removing previous ElvUI install...")
+	for _, folder := range []string{"ElvUI", "ElvUI_Options"} {
+		_ = removeExistingAddon(cfg.AddonsPath, folder)
+	}
+	a.emitLog("Extracting ElvUI...")
+	folders, err := extractZipToAddons(zipPath, cfg.AddonsPath)
+	if err != nil {
+		return "", err
+	}
+	a.emitLog(fmt.Sprintf("ElvUI installed: %s", strings.Join(folders, ", ")))
+	wruntime.EventsEmit(a.ctx, "elvui:installed", rel.Version)
+	return rel.Version, nil
+}
+
+// ----- Install prompt -----
+
+// ConfirmInstallAddon is called when the user confirms they want to install MavrogBattlecry.
+func (a *App) ConfirmInstallAddon() (string, error) {
+	return a.InstallUpdate()
+}
+
+// ----- Background checker -----
+
+func (a *App) startBackgroundChecker() {
+	a.bgMu.Lock()
+	defer a.bgMu.Unlock()
+	if a.bgCancel != nil {
+		a.bgCancel()
+	}
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.bgCancel = cancel
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				a.runBackgroundCheck()
+			}
+		}
+	}()
+}
+
+func (a *App) runBackgroundCheck() {
+	cfg, _ := loadConfig()
+	installed, _ := readInstalledVersion(cfg.AddonsPath)
+	rel, err := fetchLatestRelease(AddonRepoOwner, AddonRepoName)
+	if err != nil {
+		return
+	}
+	latest := strings.TrimPrefix(rel.TagName, "v")
+	if semverNewer(installed, latest) {
+		sendToast(
+			"MavrogBattlecry Update Available",
+			fmt.Sprintf("Version %s is ready to install.", latest),
+			"mavrog-updater://open",
+		)
+		if a.ctx != nil {
+			wruntime.EventsEmit(a.ctx, "bg:update", map[string]string{
+				"latest": latest,
+			})
+		}
+	}
 }
 
 // InstallUpdate downloads the latest addon release zip and extracts it into AddOns.
@@ -201,6 +375,7 @@ func (a *App) InstallUpdate() (string, error) {
 	_ = saveConfig(cfg)
 
 	a.emitLog(fmt.Sprintf("Installed: %s", strings.Join(folders, ", ")))
+	wruntime.EventsEmit(a.ctx, "addon:installed", cfg.LastVersion)
 	return cfg.LastVersion, nil
 }
 
@@ -233,7 +408,7 @@ func (a *App) CheckSelfUpdate() (SelfUpdateInfo, error) {
 		info.AssetName = asset.Name
 		info.HasAsset = true
 	}
-	info.UpdateAvailable = info.HasAsset && !versionsEqual(AppVersion, rel.TagName)
+	info.UpdateAvailable = info.HasAsset && semverNewer(AppVersion, rel.TagName)
 	return info, nil
 }
 

@@ -5,9 +5,11 @@ export namespace main {
 	    addonsPath: string;
 	    addonsAutoFound: boolean;
 	    installedVersion: string;
+	    addonInstalled: boolean;
 	    autoCheck: boolean;
 	    addonName: string;
 	    addonRepo: string;
+	    elvuiInstalled: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppStatus(source);
@@ -19,9 +21,35 @@ export namespace main {
 	        this.addonsPath = source["addonsPath"];
 	        this.addonsAutoFound = source["addonsAutoFound"];
 	        this.installedVersion = source["installedVersion"];
+	        this.addonInstalled = source["addonInstalled"];
 	        this.autoCheck = source["autoCheck"];
 	        this.addonName = source["addonName"];
 	        this.addonRepo = source["addonRepo"];
+	        this.elvuiInstalled = source["elvuiInstalled"];
+	    }
+	}
+	export class ElvUIInfo {
+	    installed: boolean;
+	    installedVersion: string;
+	    latestVersion: string;
+	    downloadUrl: string;
+	    changelog: string;
+	    webUrl: string;
+	    updateAvailable: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ElvUIInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.installed = source["installed"];
+	        this.installedVersion = source["installedVersion"];
+	        this.latestVersion = source["latestVersion"];
+	        this.downloadUrl = source["downloadUrl"];
+	        this.changelog = source["changelog"];
+	        this.webUrl = source["webUrl"];
+	        this.updateAvailable = source["updateAvailable"];
 	    }
 	}
 	export class SelfUpdateInfo {

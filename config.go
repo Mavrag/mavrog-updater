@@ -9,9 +9,10 @@ import (
 
 // Config is persisted user configuration.
 type Config struct {
-	AddonsPath  string `json:"addonsPath"`
-	AutoCheck   bool   `json:"autoCheck"`
-	LastVersion string `json:"lastVersion"`
+	AddonsPath      string `json:"addonsPath"`
+	AutoCheck       bool   `json:"autoCheck"`
+	LastVersion     string `json:"lastVersion"`
+	ElvUIAutoUpdate bool   `json:"elvuiAutoUpdate"`
 }
 
 func configDir() (string, error) {
