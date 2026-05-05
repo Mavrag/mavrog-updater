@@ -179,33 +179,31 @@ if ($LASTEXITCODE -ne 0) {
 gh release view $tag --repo $Repo *> $null
 $releaseExists = ($LASTEXITCODE -eq 0)
 
+# Build notes if not supplied
+if (-not $Notes) {
+  $prevTag = (git tag --sort=-version:refname | Where-Object { $_ -ne $tag } | Select-Object -First 1)
+  if ($prevTag) {
+    $commits = @(git log "$prevTag..$tag" --pretty=format:"- %s" --no-merges)
+  } else {
+    $commits = @(git log $tag --pretty=format:"- %s" --no-merges)
+  }
+  $commitsText = ($commits -join "`n")
+  $changelogUrl = if ($prevTag) { "https://github.com/$Repo/compare/$prevTag...$tag" } else { "" }
+  $Notes = "## What's Changed`n`n$commitsText"
+  if ($changelogUrl) { $Notes += "`n`n**Full Changelog**: $changelogUrl" }
+}
+$tmp = New-TemporaryFile
+Set-Content -LiteralPath $tmp -Value $Notes -Encoding UTF8
+
 if ($releaseExists) {
-  Info "Release $tag already exists. Uploading asset (clobber)..."
+  Info "Release $tag exists. Updating notes + asset..."
+  gh release edit $tag --repo $Repo --notes-file $tmp
+  if ($LASTEXITCODE -ne 0) { Fail "gh release edit failed." }
   gh release upload $tag $exe --repo $Repo --clobber
+  if ($LASTEXITCODE -ne 0) { Fail "gh release upload failed." }
 } else {
   Info "Creating GitHub Release $tag ..."
-  $ghArgs = @(
-    "release","create",$tag,$exe,
-    "--repo",$Repo,
-    "--title","Mavrog Updater $tag"
-  )
-  if (-not $Notes) {
-    # Build default notes from commits since last tag
-    $prevTag = (git tag --sort=-version:refname | Select-Object -Skip 1 -First 1)
-    if ($prevTag) {
-      $commits = @(git log "$prevTag..HEAD" --pretty=format:"- %s" --no-merges)
-    } else {
-      $commits = @(git log --pretty=format:"- %s" --no-merges)
-    }
-    $commitsText = ($commits -join "`n")
-    $changelogUrl = if ($prevTag) { "https://github.com/$Repo/compare/$prevTag...$tag" } else { "" }
-    $Notes = "## What's Changed`n`n$commitsText"
-    if ($changelogUrl) { $Notes += "`n`n**Full Changelog**: $changelogUrl" }
-  }
-  $tmp = New-TemporaryFile
-  Set-Content -LiteralPath $tmp -Value $Notes -Encoding UTF8
-  $ghArgs += @("--notes-file",$tmp)
-  gh @ghArgs
+  gh release create $tag $exe --repo $Repo --title "Mavrog Updater $tag" --notes-file $tmp
   if ($LASTEXITCODE -ne 0) { Fail "gh release create failed." }
 }
 
