@@ -105,7 +105,12 @@
 
   function renderMd(src: string): string {
     if (!src) return '';
-    return marked.parse(src) as string;
+    // Ensure every heading is preceded by a blank line (required when breaks:true).
+    const normalized = src
+      .replace(/([^\n])\n(#{1,6} )/g, '$1\n\n$2')  // heading after text
+      .replace(/^(#{1,6} )/gm, '\n$1')              // heading at line start
+      .replace(/\n{3,}/g, '\n\n');                  // collapse excess blanks
+    return marked.parse(normalized.trimStart()) as string;
   }
 
   function fmtBytes(n: number): string {
