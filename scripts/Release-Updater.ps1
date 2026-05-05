@@ -189,13 +189,21 @@ if ($releaseExists) {
     "--repo",$Repo,
     "--title","Mavrog Updater $tag"
   )
-  if ($Notes) {
-    $tmp = New-TemporaryFile
-    Set-Content -LiteralPath $tmp -Value $Notes -Encoding UTF8
-    $ghArgs += @("--notes-file",$tmp)
-  } else {
-    $ghArgs += "--generate-notes"
+  if (-not $Notes) {
+    # Build default notes from commits since last tag
+    $prevTag = (git tag --sort=-version:refname | Select-Object -Skip 1 -First 1)
+    if ($prevTag) {
+      $commits = (git log "$prevTag..HEAD" --pretty=format:"- %s" --no-merges)
+    } else {
+      $commits = (git log --pretty=format:"- %s" --no-merges)
+    }
+    $changelogUrl = if ($prevTag) { "https://github.com/$Repo/compare/$prevTag...$tag" } else { "" }
+    $Notes = "## What's Changed`n`n$commits"
+    if ($changelogUrl) { $Notes += "`n`n**Full Changelog**: $changelogUrl" }
   }
+  $tmp = New-TemporaryFile
+  Set-Content -LiteralPath $tmp -Value $Notes -Encoding UTF8
+  $ghArgs += @("--notes-file",$tmp)
   gh @ghArgs
   if ($LASTEXITCODE -ne 0) { Fail "gh release create failed." }
 }
