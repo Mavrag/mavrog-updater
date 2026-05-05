@@ -243,7 +243,7 @@
   {#if view === 'home'}
     <section class="hero">
       <div class="addon-block">
-        <div class="block-title">MavrogBattlecry</div>
+        <div class="block-title">MavrogBattlecry {#if status?.addonRepo}<button class="ghost title-link" on:click={() => OpenURL(`https://github.com/${status?.addonRepo}`)}>GitHub ↗</button>{/if}</div>
         <div class="versions">
           <div class="vbox">
             <div class="label">Installed</div>
@@ -255,9 +255,6 @@
             <div class="value latest">
               {checking ? '...' : (update?.latestVersion || '?')}
             </div>
-            {#if update?.publishedAt}
-              <div class="muted small">{update.publishedAt}</div>
-            {/if}
           </div>
         </div>
         <div class="actions">
@@ -276,9 +273,6 @@
         </div>
         {#if (installing) && progress > 0}
           <div class="progress"><div class="bar" style="width: {progress}%"></div></div>
-        {/if}
-        {#if update?.assetName}
-          <div class="muted small">{update.assetName} {update.assetSize ? '(' + fmtBytes(update.assetSize) + ')' : ''}</div>
         {/if}
       </div>
 
