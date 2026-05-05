@@ -28,7 +28,7 @@
   let progress = 0;
   let logLines: string[] = [];
   let errorMsg = '';
-  let view: 'home' | 'changelog' | 'settings' = 'home';
+  let view: 'home' | 'settings' = 'home';
   let autoCheck = true;
   let showInstallPrompt = false;
   let bgUpdateBanner = '';
@@ -84,6 +84,7 @@
       pushLog(`Installed version ${v}`);
       await refreshStatus();
       await check();
+      scheduleLogClear();
     } catch (e: any) {
       errorMsg = String(e?.message ?? e);
     } finally {
@@ -100,11 +101,22 @@
       const v = await InstallElvUIUpdate();
       pushLog(`ElvUI ${v} installed`);
       elvui = await CheckElvUIUpdate();
+      scheduleLogClear();
     } catch (e: any) {
       errorMsg = String(e?.message ?? e);
     } finally {
       installingElvUI = false;
     }
+  }
+
+  let logClearTimer: ReturnType<typeof setTimeout> | null = null;
+  function scheduleLogClear() {
+    if (logClearTimer) clearTimeout(logClearTimer);
+    logClearTimer = setTimeout(() => { logLines = []; logClearTimer = null; }, 4000);
+  }
+  function clearLog() {
+    if (logClearTimer) { clearTimeout(logClearTimer); logClearTimer = null; }
+    logLines = [];
   }
 
   async function confirmInstall() {
@@ -200,13 +212,11 @@
 <main>
   <nav>
     <button class="ghost" class:active={view === 'home'} on:click={() => view = 'home'}>Home</button>
-    <button class="ghost" class:active={view === 'changelog'} on:click={() => view = 'changelog'}>Changelog</button>
     <button class="ghost" class:active={view === 'settings'} on:click={() => view = 'settings'}>Settings</button>
     <span class="spacer"></span>
     <button class="nav-check" on:click={check} disabled={checking || installing || installingElvUI}>
       {checking ? '↻ Checking...' : '↻ Check'}
     </button>
-    <span class="addon-name">{status?.addonName ?? ''}</span>
   </nav>
 
   {#if errorMsg}
@@ -243,64 +253,86 @@
   {#if view === 'home'}
     <section class="hero">
       <div class="addon-block">
-        <div class="block-title">MavrogBattlecry {#if status?.addonRepo}<button class="ghost title-link" on:click={() => OpenURL(`https://github.com/${status?.addonRepo}`)}>GitHub ↗</button>{/if}</div>
-        <div class="versions">
-          <div class="vbox">
-            <div class="label">Installed</div>
-            <div class="value">{status?.installedVersion || '—'}</div>
-          </div>
-          <div class="arrow">→</div>
-          <div class="vbox">
-            <div class="label">Latest</div>
-            <div class="value latest">
-              {checking ? '...' : (update?.latestVersion || '?')}
+        <div class="addon-row">
+          <div class="addon-info">
+            <div class="addon-name">
+              MavrogBattlecry
+              {#if status?.addonRepo}
+                <button class="ghost title-link" on:click={() => OpenURL(`https://github.com/${status?.addonRepo}`)}>GitHub ↗</button>
+              {/if}
+              {#if update?.htmlUrl}
+                <button class="ghost icon-btn" title="Changelog" aria-label="Changelog" on:click={() => update && OpenURL(update.htmlUrl)}>📄</button>
+              {/if}
+            </div>
+            <div class="addon-versions">
+              {#if checking}
+                <span class="muted">checking…</span>
+              {:else if update?.updateAvailable}
+                <span>{status?.installedVersion || '—'}</span>
+                <span class="arrow-inline">→</span>
+                <span class="latest">{update?.latestVersion}</span>
+              {:else}
+                <span>{status?.installedVersion || update?.latestVersion || '—'}</span>
+              {/if}
             </div>
           </div>
+          <div class="actions">
+            <button class="primary" on:click={install}
+              disabled={installing || checking || !update?.updateAvailable || !status?.addonsPath}>
+              {#if installing}
+                Installing... {progress > 0 ? progress.toFixed(0) + '%' : ''}
+              {:else if update?.updateAvailable}
+                Update
+              {:else if update && !update.hasAsset}
+                No asset
+              {:else}
+                Up to date
+              {/if}
+            </button>
+          </div>
         </div>
-        <div class="actions">
-          <button class="primary" on:click={install}
-            disabled={installing || checking || !update?.updateAvailable || !status?.addonsPath}>
-            {#if installing}
-              Installing... {progress > 0 ? progress.toFixed(0) + '%' : ''}
-            {:else if update?.updateAvailable}
-              Install {update.latestVersion}
-            {:else if update && !update.hasAsset}
-              No asset
-            {:else}
-              Up to date
-            {/if}
-          </button>
-        </div>
-        {#if (installing) && progress > 0}
+        {#if installing && progress > 0}
           <div class="progress"><div class="bar" style="width: {progress}%"></div></div>
         {/if}
       </div>
 
       {#if status?.elvuiInstalled}
         <div class="addon-block elvui-block">
-          <div class="block-title">ElvUI {#if elvui?.webUrl}<button class="ghost title-link" on:click={() => elvui && OpenURL(elvui.webUrl)}>Tukui ↗</button>{/if}</div>
-          <div class="versions">
-            <div class="vbox">
-              <div class="label">Installed</div>
-              <div class="value">{elvui?.installedVersion || '—'}</div>
+          <div class="addon-row">
+            <div class="addon-info">
+              <div class="addon-name">
+                ElvUI
+                {#if elvui?.webUrl}
+                  <button class="ghost title-link" on:click={() => elvui && OpenURL(elvui.webUrl)}>Tukui ↗</button>
+                {/if}
+                {#if elvui?.webUrl}
+                  <button class="ghost icon-btn" title="Changelog" aria-label="Changelog" on:click={() => elvui && OpenURL(elvui.webUrl)}>📄</button>
+                {/if}
+              </div>
+              <div class="addon-versions">
+                {#if checking}
+                  <span class="muted">checking…</span>
+                {:else if elvui?.updateAvailable}
+                  <span>{elvui?.installedVersion || '—'}</span>
+                  <span class="arrow-inline">→</span>
+                  <span class="latest">{elvui?.latestVersion}</span>
+                {:else}
+                  <span>{elvui?.installedVersion || elvui?.latestVersion || '—'}</span>
+                {/if}
+              </div>
             </div>
-            <div class="arrow">→</div>
-            <div class="vbox">
-              <div class="label">Latest</div>
-              <div class="value latest">{checking ? '...' : (elvui?.latestVersion || '?')}</div>
+            <div class="actions">
+              <button class="primary" on:click={installElvUI}
+                disabled={installingElvUI || checking || !elvui?.updateAvailable}>
+                {#if installingElvUI}
+                  Installing... {progress > 0 ? progress.toFixed(0) + '%' : ''}
+                {:else if elvui?.updateAvailable}
+                  Update
+                {:else}
+                  Up to date
+                {/if}
+              </button>
             </div>
-          </div>
-          <div class="actions">
-            <button class="primary" on:click={installElvUI}
-              disabled={installingElvUI || checking || !elvui?.updateAvailable}>
-              {#if installingElvUI}
-                Installing... {progress > 0 ? progress.toFixed(0) + '%' : ''}
-              {:else if elvui?.updateAvailable}
-                Install {elvui.latestVersion}
-              {:else}
-                Up to date
-              {/if}
-            </button>
           </div>
           {#if installingElvUI && progress > 0}
             <div class="progress"><div class="bar" style="width: {progress}%"></div></div>
@@ -313,22 +345,10 @@
       {/if}
 
       {#if logLines.length}
-        <div class="log">{#each logLines as l}<div>{l}</div>{/each}</div>
-      {/if}
-    </section>
-
-  {:else if view === 'changelog'}
-    <section class="changelog">
-      {#if !update}
-        <p class="muted">Run a check first to see release notes.</p>
-        <button on:click={check}>Check Now</button>
-      {:else}
-        <h2>{update.releaseName || update.latestVersion}</h2>
-        <div class="muted small">{update.publishedAt}</div>
-        <div class="md">{@html renderMd(update.changelog || '_(no notes provided)_')}</div>
-        {#if update.htmlUrl}
-          <button class="ghost" on:click={() => update && OpenURL(update.htmlUrl)}>Open on GitHub ↗</button>
-        {/if}
+        <div class="log">
+          <button class="log-close" title="Dismiss" on:click={clearLog}>×</button>
+          {#each logLines as l}<div>{l}</div>{/each}
+        </div>
       {/if}
     </section>
 
@@ -370,6 +390,11 @@
       </div>
     </section>
   {/if}
+
+  {#if status?.appVersion}
+    <footer class="app-footer">v{status.appVersion.replace(/^v/, '')}</footer>
+  {/if}
+
 </main>
 
 <style>
@@ -377,7 +402,7 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    padding: 8px 10px 10px;
+    padding: 8px 10px 4px;
     gap: 7px;
     font-size: 12px;
   }
@@ -429,30 +454,33 @@
   .banner.install { background: rgba(99, 220, 130, 0.08); border-color: rgba(99, 220, 130, 0.4); }
 
   .hero {
-    display: flex; flex-direction: column; align-items: center; gap: 9px;
+    display: flex; flex-direction: column; align-items: stretch; gap: 6px;
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: 9px;
-    padding: 12px 12px;
-    flex: 1;
-    overflow: auto;
+    padding: 10px 10px;
+    flex: 0 1 auto;
+    /* fits up to ~5 addon blocks before scrolling */
+    max-height: 380px;
+    overflow-y: auto;
   }
   .addon-block {
-    width: 100%; display: flex; flex-direction: column; align-items: center; gap: 7px;
-    padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-3);
+    width: 100%; display: flex; flex-direction: column; gap: 6px;
+    padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-3);
   }
-  .addon-block + .addon-block { margin-top: 4px; }
+  .addon-block + .addon-block { margin-top: 6px; }
   .elvui-block { border-color: rgba(99, 220, 130, 0.25); }
-  .block-title { font-size: 11px; font-weight: 700; letter-spacing: 0.03em; color: var(--muted); align-self: flex-start; display: flex; align-items: center; gap: 6px; }
-  .title-link { font-size: 10px; padding: 1px 5px; text-transform: none; letter-spacing: 0; opacity: 0.7; }
+  .addon-row { display: flex; align-items: center; gap: 12px; width: 100%; }
+  .addon-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .addon-name { font-size: 18px; font-weight: 700; line-height: 1.15; display: flex; align-items: center; gap: 8px; }
+  .addon-versions { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .addon-versions .latest { color: var(--accent); font-weight: 600; }
+  .addon-versions .arrow-inline { opacity: 0.6; }
+  .title-link { font-size: 10px; padding: 1px 5px; text-transform: none; letter-spacing: 0; opacity: 0.7; font-weight: 500; }
   .title-link:hover { opacity: 1; }
-  .versions { display: flex; align-items: center; gap: 14px; }
-  .vbox { text-align: center; min-width: 110px; }
-  .label { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-  .value { font-size: 17px; font-weight: 700; margin-top: 1px; line-height: 1.15; }
-  .value.latest { color: var(--accent); }
-  .arrow { font-size: 20px; color: var(--muted); }
-  .actions { display: flex; gap: 8px; }
+  .icon-btn { font-size: 12px; padding: 1px 4px; opacity: 0.65; line-height: 1; }
+  .icon-btn:hover { opacity: 1; }
+  .actions { display: flex; gap: 8px; flex-shrink: 0; }
   .progress {
     width: 100%; max-width: 360px; height: 5px; background: var(--bg-3); border-radius: 3px; overflow: hidden;
   }
@@ -463,9 +491,49 @@
   .center { text-align: center; }
 
   .log {
+    position: relative;
     width: 100%; max-height: 110px; overflow: auto;
     background: #0c0e16; border: 1px solid var(--border); border-radius: 7px;
-    padding: 6px 9px; font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: #b9c0d4;
+    padding: 6px 9px; padding-right: 26px; font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: #b9c0d4;
+  }
+  .log-close {
+    position: absolute; top: 3px; right: 5px;
+    background: transparent; border: none; color: var(--muted);
+    font-size: 16px; line-height: 1; padding: 2px 6px; cursor: pointer; border-radius: 4px;
+  }
+  .log-close:hover { color: #fff; background: rgba(255,255,255,0.06); }
+
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; padding: 20px;
+  }
+  .modal {
+    background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+    width: 100%; max-width: 560px; max-height: 80vh;
+    display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  }
+  .modal-header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 12px 14px; border-bottom: 1px solid var(--border); gap: 10px;
+  }
+  .modal-header h2 { margin: 0; font-size: 14px; }
+  .modal-close {
+    background: transparent; border: none; color: var(--muted);
+    font-size: 22px; line-height: 1; padding: 0 6px; cursor: pointer; border-radius: 4px;
+  }
+  .modal-close:hover { color: #fff; background: rgba(255,255,255,0.06); }
+  .modal-body { padding: 12px 16px; overflow-y: auto; flex: 1; }
+  .modal-footer {
+    padding: 10px 14px; border-top: 1px solid var(--border);
+    display: flex; justify-content: flex-end; gap: 8px;
+  }
+
+  .app-footer {
+    position: fixed; bottom: 1px; left: 0; right: 0;
+    text-align: center; color: #d4d8e6; font-size: 9px;
+    letter-spacing: 0.04em; opacity: 0.85; pointer-events: none;
   }
 
   .changelog {

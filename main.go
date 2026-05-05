@@ -50,10 +50,10 @@ func main() {
 	// Create application with options
 	err = wails.Run(&options.App{
 		Title:     "Mavrog Updater",
-		Width:     640,
-		Height:    460,
-		MinWidth:  540,
-		MinHeight: 400,
+		Width:     500,
+		Height:    260,
+		MinWidth:  500,
+		MinHeight: 260,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
