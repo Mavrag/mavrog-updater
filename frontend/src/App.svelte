@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { marked } from 'marked';
-  import appIcon from './assets/images/appicon.png';
   import {
     GetStatus,
     CheckForUpdate,
@@ -134,20 +133,13 @@
 </script>
 
 <main>
-  <header>
-    <div class="brand">
-      <img class="logo" src={appIcon} alt="Mavrog" draggable="false" />
-      <div>
-        <div class="title">Mavrog Updater</div>
-        <div class="subtitle">{status?.addonName ?? '...'}</div>
-      </div>
-    </div>
-    <nav>
-      <button class="ghost" class:active={view === 'home'} on:click={() => view = 'home'}>Home</button>
-      <button class="ghost" class:active={view === 'changelog'} on:click={() => view = 'changelog'}>Changelog</button>
-      <button class="ghost" class:active={view === 'settings'} on:click={() => view = 'settings'}>Settings</button>
-    </nav>
-  </header>
+  <nav>
+    <button class="ghost" class:active={view === 'home'} on:click={() => view = 'home'}>Home</button>
+    <button class="ghost" class:active={view === 'changelog'} on:click={() => view = 'changelog'}>Changelog</button>
+    <button class="ghost" class:active={view === 'settings'} on:click={() => view = 'settings'}>Settings</button>
+    <span class="spacer"></span>
+    <span class="addon-name">{status?.addonName ?? ''}</span>
+  </nav>
 
   {#if errorMsg}
     <div class="banner error">
@@ -294,25 +286,15 @@
     font-size: 12px;
   }
 
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    -webkit-app-region: drag;
+  nav {
+    display: flex; align-items: center; gap: 4px;
   }
-  nav { display: flex; gap: 4px; -webkit-app-region: no-drag; }
   nav .active { color: var(--text); background: var(--bg-3); }
-
-  .brand { display: flex; align-items: center; gap: 8px; }
-  .logo {
-    width: 26px; height: 26px;
-    border-radius: 6px;
-    object-fit: cover;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
-    -webkit-user-drag: none;
+  nav .spacer { flex: 1; }
+  nav .addon-name {
+    color: var(--muted); font-size: 11px; padding-right: 4px;
+    letter-spacing: 0.03em;
   }
-  .title { font-weight: 700; font-size: 12.5px; line-height: 1.1; }
-  .subtitle { font-size: 10.5px; color: var(--muted); }
 
   .banner {
     display: flex; align-items: center; justify-content: space-between;
